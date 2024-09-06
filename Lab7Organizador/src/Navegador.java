@@ -1,5 +1,4 @@
 
-
 import javax.swing.*;
 import javax.swing.tree.*;
 import java.awt.*;
@@ -84,9 +83,13 @@ public class Navegador extends JPanel implements ActionListener {
     }
 
     private void loadFileTree() {
-        rootNode.removeAllChildren(); 
+        rootNode.removeAllChildren();
         addNodes(rootNode, dirActual);
-        treeModel.reload(); 
+        File[] archivos = dirActual.listFiles();
+
+        printLastModifiedDates(archivos);  
+
+        treeModel.reload();
     }
 
     private void addNodes(DefaultMutableTreeNode parentNode, File file) {
@@ -94,25 +97,23 @@ public class Navegador extends JPanel implements ActionListener {
             File[] childFiles = file.listFiles();
 
             if (childFiles != null) {
-                File[] folders = Arrays.stream(childFiles)
-                        .filter(File::isDirectory)
-                        .sorted(Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER))
-                        .toArray(File[]::new);
+                Arrays.sort(childFiles, (f1, f2) -> {
+                    if (f1.isDirectory() && !f2.isDirectory()) {
+                        return -1; 
+                    } else if (!f1.isDirectory() && f2.isDirectory()) {
+                        return 1; 
+                    } else {
+                        return f1.getName().compareToIgnoreCase(f2.getName()); 
+                    }
+                });
 
-                File[] files = Arrays.stream(childFiles)
-                        .filter(f -> !f.isDirectory())
-                        .sorted(Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER))
-                        .toArray(File[]::new);
+                for (File childFile : childFiles) {
+                    DefaultMutableTreeNode childNode = new DefaultMutableTreeNode(childFile.getName());
+                    parentNode.add(childNode);
 
-                for (File folder : folders) {
-                    DefaultMutableTreeNode folderNode = new DefaultMutableTreeNode(folder.getName());
-                    parentNode.add(folderNode);
-                    addNodes(folderNode, folder); 
-                }
-
-                for (File childFile : files) {
-                    DefaultMutableTreeNode node = new DefaultMutableTreeNode(childFile.getName());
-                    parentNode.add(node);
+                    if (childFile.isDirectory()) {
+                        addNodes(childNode, childFile);
+                    }
                 }
             }
         }
@@ -126,11 +127,13 @@ public class Navegador extends JPanel implements ActionListener {
         if (selectedNode != null) {
             File selectedFile;
 
-            if (selectedNode == rootNode) {
-                selectedFile = dirActual;
-            } else {
-                selectedFile = new File(dirActual, selectedNode.getUserObject().toString());
-            }
+            String fullPath = getFullPath(selectedNode);
+            selectedFile = new File(fullPath);
+
+            System.out.println("Selected Node: " + selectedNode);
+            System.out.println("Selected File Path: " + selectedFile.getAbsolutePath());
+            System.out.println("Es directorio: " + selectedFile.isDirectory());
+
 
             System.out.println("Selected File Path: " + selectedFile.getAbsolutePath());
             System.out.println("Es directorio: " + selectedFile.isDirectory());
@@ -146,11 +149,11 @@ public class Navegador extends JPanel implements ActionListener {
                         options,
                         options[0]);
 
-                if (choice != -1) { 
+                if (choice != -1) {
                     String name = JOptionPane.showInputDialog("Ingrese el nombre:");
                     if (name != null && !name.trim().isEmpty()) {
                         File newFile;
-                        if (choice == 0) { 
+                        if (choice == 0) {
                             newFile = new File(selectedFile, name);
                             try {
                                 if (newFile.createNewFile()) {
@@ -169,7 +172,7 @@ public class Navegador extends JPanel implements ActionListener {
                                 JOptionPane.showMessageDialog(this, "No se pudo crear la carpeta.");
                             }
                         }
-                        loadFileTree(); 
+                        loadFileTree();
                     }
                 }
             } else {
@@ -184,7 +187,7 @@ public class Navegador extends JPanel implements ActionListener {
         DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) fileTree.getLastSelectedPathComponent();
 
         if (selectedNode != null) {
-            String fullPath = getFullPath(selectedNode); // Asegurarse de obtener la ruta completa
+            String fullPath = getFullPath(selectedNode); 
             clipboard = new File(fullPath);
 
             System.out.println("Archivo/Carpeta copiado al portapapeles: " + clipboard.getAbsolutePath());
@@ -198,7 +201,7 @@ public class Navegador extends JPanel implements ActionListener {
             String destinoPath;
 
             if (selectedNode == rootNode) {
-                destinoPath = dirActual.getAbsolutePath();  
+                destinoPath = dirActual.getAbsolutePath();
             } else {
                 destinoPath = getFullPath(selectedNode);
             }
@@ -213,32 +216,73 @@ public class Navegador extends JPanel implements ActionListener {
             File destino = new File(destinoDir, clipboard.getName());
 
             if (destino.exists()) {
-                JOptionPane.showMessageDialog(this, "Ya existe un archivo o carpeta con el mismo nombre en el destino.");
-                return;
+                destino = obtenerNombreUnico(destino);  
             }
 
-            if (clipboard.isDirectory()) {
-                try {
+            try {
+                if (clipboard.isDirectory()) {
                     copiarDirectorio(clipboard, destino);
-                    System.out.println("Carpeta copiada a: " + destino.getAbsolutePath());
-                } catch (IOException e) {
-                    JOptionPane.showMessageDialog(this, "Error al copiar la carpeta.");
-                    e.printStackTrace();
-                }
-            } else {
-                try {
+                } else {
                     copiarArchivo(clipboard, destino);
-                    System.out.println("Archivo copiado a: " + destino.getAbsolutePath());
-                } catch (IOException e) {
-                    JOptionPane.showMessageDialog(this, "Error al copiar el archivo.");
-                    e.printStackTrace();
                 }
-            }
 
-            loadFileTree();
+                DefaultMutableTreeNode newNode = new DefaultMutableTreeNode(destino.getName());
+                selectedNode.add(newNode);  
+                addNodes(newNode, destino);
+                treeModel.reload();
+
+                fileTree.setSelectionPath(new TreePath(newNode.getPath()));
+
+                System.out.println("Archivo o carpeta copiado correctamente a: " + destino.getAbsolutePath());
+
+                clipboard = destino; 
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(this, "Error al copiar el archivo o carpeta.");
+                e.printStackTrace();
+            }
         } else {
             JOptionPane.showMessageDialog(this, "No hay ningún archivo en el portapapeles o destino no seleccionado.");
         }
+    }
+
+    private File getNewFileName(File dir, String originalName) {
+        String name = originalName;
+        String extension = "";
+        int dotIndex = originalName.lastIndexOf(".");
+        if (dotIndex > 0) {
+            name = originalName.substring(0, dotIndex);
+            extension = originalName.substring(dotIndex);
+        }
+
+        int count = 1;
+        File newFile = new File(dir, name + "_" + count + extension);
+        while (newFile.exists()) {
+            count++;
+            newFile = new File(dir, name + "_" + count + extension);
+        }
+        return newFile;
+    }
+
+    private File obtenerNombreUnico(File destino) {
+        String nombre = destino.getName();
+        String path = destino.getParent();
+        String extension = "";
+
+        int dotIndex = nombre.lastIndexOf(".");
+        if (dotIndex != -1) {
+            extension = nombre.substring(dotIndex);
+            nombre = nombre.substring(0, dotIndex);
+        }
+
+        int contador = 1;
+        File nuevoDestino = new File(path, nombre + extension);
+
+        while (nuevoDestino.exists()) {
+            nuevoDestino = new File(path, nombre + "(" + contador + ")" + extension);
+            contador++;
+        }
+
+        return nuevoDestino;
     }
 
     private void copiarArchivo(File origen, File destino) throws IOException {
@@ -254,11 +298,17 @@ public class Navegador extends JPanel implements ActionListener {
                 out.write(buffer, 0, length);
             }
         }
+
+        if (!destino.exists()) {
+            JOptionPane.showMessageDialog(this, "No se pudo copiar el archivo.");
+        } else {
+            System.out.println("Archivo copiado a: " + destino.getAbsolutePath());
+        }
     }
 
     private void copiarDirectorio(File origen, File destino) throws IOException {
         if (!destino.exists()) {
-            destino.mkdir(); 
+            destino.mkdir();
         }
 
         for (String archivo : origen.list()) {
@@ -266,9 +316,9 @@ public class Navegador extends JPanel implements ActionListener {
             File destinoArchivo = new File(destino, archivo);
 
             if (origenArchivo.isDirectory()) {
-                copiarDirectorio(origenArchivo, destinoArchivo); 
+                copiarDirectorio(origenArchivo, destinoArchivo);
             } else {
-                copiarArchivo(origenArchivo, destinoArchivo); 
+                copiarArchivo(origenArchivo, destinoArchivo);
             }
         }
     }
@@ -276,23 +326,40 @@ public class Navegador extends JPanel implements ActionListener {
     private void renameFileOrFolder() {
         DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) fileTree.getLastSelectedPathComponent();
 
-        System.out.println("Selected Node: " + selectedNode);
-
         if (selectedNode != null) {
+            if (selectedNode == rootNode) {
+                JOptionPane.showMessageDialog(this, "El archivo raíz no puede ser renombrado.");
+                return; 
+            }
+
             String fullPath = getFullPath(selectedNode);
             File file = new File(fullPath);
 
-            System.out.println("File Path for renaming: " + file.getAbsolutePath());
+            if (!file.exists()) {
+                JOptionPane.showMessageDialog(this, "El archivo no existe: " + file.getAbsolutePath());
+                System.out.println("Archivo no encontrado en la ruta: " + file.getAbsolutePath());
+                return;
+            }
+
+            System.out.println("Intentando renombrar archivo: " + file.getAbsolutePath());
 
             String newName = JOptionPane.showInputDialog("Ingrese el nuevo nombre:");
             if (newName != null && !newName.trim().isEmpty()) {
                 File newFile = new File(file.getParent(), newName);
+
+                if (newFile.exists()) {
+                    newFile = obtenerNombreUnico(newFile);
+                }
+
                 if (file.renameTo(newFile)) {
-                    System.out.println("Renamed: " + newFile.getAbsolutePath());
+                    System.out.println("Archivo renombrado correctamente a: " + newFile.getAbsolutePath());
                     loadFileTree(); 
                 } else {
-                    JOptionPane.showMessageDialog(this, "No se pudo renombrar el archivo o carpeta.");
+                    System.out.println("Error al renombrar archivo: " + file.getAbsolutePath() + " -> " + newFile.getAbsolutePath());
+                    JOptionPane.showMessageDialog(this, "No se pudo renombrar el archivo o carpeta. Verifique permisos o si el archivo está en uso.");
                 }
+            } else {
+                JOptionPane.showMessageDialog(this, "El nombre proporcionado no es válido.");
             }
         } else {
             JOptionPane.showMessageDialog(this, "No hay ninguna carpeta o archivo seleccionado.");
@@ -300,22 +367,60 @@ public class Navegador extends JPanel implements ActionListener {
     }
 
     private String getFullPath(DefaultMutableTreeNode node) {
-        StringBuilder fullPath = new StringBuilder(node.getUserObject().toString());
+        StringBuilder fullPath = new StringBuilder();
         TreeNode[] path = node.getPath();
-        for (int i = 1; i < path.length - 1; i++) {
-            fullPath.insert(0, "/").insert(0, path[i].toString());
+
+        for (int i = 1; i < path.length; i++) {
+            fullPath.append("/").append(path[i].toString());
         }
-        return dirActual.getAbsolutePath() + "/" + fullPath.toString();
+
+        return dirActual.getAbsolutePath() + fullPath.toString();
+    }
+
+    private void printLastModifiedDates(File[] archivos) {
+        if (archivos == null || archivos.length == 0) {
+            System.out.println("No se encontraron archivos en el directorio.");
+            return;
+        }
+        for (File archivo : archivos) {
+            System.out.println("Archivo: " + archivo.getName() + " - Última modificación: " + new java.util.Date(archivo.lastModified()));
+        }
     }
 
     private void ordenarPor(Comparator<File> comparador) {
         File[] archivos = dirActual.listFiles();
-        Arrays.sort(archivos, comparador);
-        rootNode.removeAllChildren();
-        for (File archivo : archivos) {
-            addNodes(rootNode, archivo);
+
+        if (archivos != null) {
+            Arrays.sort(archivos, comparador);
+
+            rootNode.removeAllChildren();
+
+            for (File archivo : archivos) {
+                DefaultMutableTreeNode archivoNode = new DefaultMutableTreeNode(archivo.getName());
+                rootNode.add(archivoNode);
+                if (archivo.isDirectory()) {
+                    addNodes(archivoNode, archivo);
+                }
+            }
+
+            treeModel.reload();
         }
-        treeModel.reload();
+    }
+
+    private int alphanumCompare(String s1, String s2) {
+        int result = s1.compareToIgnoreCase(s2);
+
+        if (s1.matches("\\d+") && s2.matches("\\d+")) {
+            return Integer.compare(Integer.parseInt(s1), Integer.parseInt(s2));
+        }
+
+        if (s1.matches("\\d+")) {
+            return 1;
+        } else if (s2.matches("\\d+")) {
+            return -1;
+        }
+
+        return result;
     }
 
     private void ordenarArchivos() {
@@ -324,27 +429,42 @@ public class Navegador extends JPanel implements ActionListener {
                 "Ordenar", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, opciones, opciones[0]);
 
         switch (opcion) {
-            case 0: 
+            case 0:
                 ordenarPor((f1, f2) -> {
-                    if (f1.isDirectory() && !f2.isDirectory()) {
-                        return -1;
+                    if (f1.isDirectory() && f2.isDirectory()) {
+                        return f1.getName().compareToIgnoreCase(f2.getName()); 
+                    } else if (f1.isDirectory() && !f2.isDirectory()) {
+                        return -1; 
                     } else if (!f1.isDirectory() && f2.isDirectory()) {
-                        return 1;
+                        return 1; 
                     } else {
-                        return f1.getName().compareToIgnoreCase(f2.getName());
+                        return f1.getName().compareToIgnoreCase(f2.getName()); 
                     }
                 });
                 break;
-            case 1: 
+            case 1:
                 ordenarPor((f1, f2) -> Boolean.compare(f1.isDirectory(), f2.isDirectory()));
                 break;
-            case 2: 
-                ordenarPor(Comparator.comparingLong(File::length));
+            case 2:
+                ordenarPor((f1, f2) -> {
+                    if (f1.isDirectory() && f2.isDirectory()) {
+                        return f1.getName().compareToIgnoreCase(f2.getName());
+                    } else if (f1.isDirectory()) {
+                        return -1;
+                    } else if (f2.isDirectory()) {
+                        return 1;  
+                    } else {
+                        return Long.compare(f1.length(), f2.length()); 
+                    }
+                });
                 break;
-            case 3: 
-                ordenarPor(Comparator.comparingLong(File::lastModified));
+            case 3:
+                ordenarPor((f1, f2) -> Long.compare(f2.lastModified(), f1.lastModified()));
+
                 break;
         }
+         treeModel.reload();
+
     }
 
     private void writeToFile() {
@@ -361,7 +481,12 @@ public class Navegador extends JPanel implements ActionListener {
                 if (content != null) {
                     try (FileWriter writer = new FileWriter(file, false)) {
                         writer.write(content);
+                        file.setLastModified(System.currentTimeMillis());
+
                         JOptionPane.showMessageDialog(this, "Contenido escrito en el archivo.");
+                        loadFileTree();
+                        ordenarArchivos();
+
                     } catch (IOException ex) {
                         JOptionPane.showMessageDialog(this, "Error al escribir en el archivo.");
                         ex.printStackTrace();
@@ -405,4 +530,3 @@ public class Navegador extends JPanel implements ActionListener {
     }
 
 }
-
